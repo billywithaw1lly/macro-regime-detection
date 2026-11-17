@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Macro Regime Lab</title>
+<style>
+:root{--bg:#fafaf8;--card:#fff;--tx:#1c1d1f;--mu:#6b6f76;--bd:#e3e3df;--ac:#2a6df4;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141516;--card:#1d1f21;--tx:#ececec;--mu:#9a9fa6;--bd:#2f3235;--ac:#6b9bff;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141516;--card:#1d1f21;--tx:#ececec;--mu:#9a9fa6;--bd:#2f3235;--ac:#6b9bff;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:0 0 4px}
+p.s{color:var(--mu);margin:0 0 12px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-top:14px}
+.ctl{display:flex;flex-wrap:wrap;gap:14px;align-items:end}
+.ctl label{display:flex;flex-direction:column;font-size:12px;color:var(--mu);gap:4px}
+select,input[type=number],button{font:inherit;padding:6px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--tx)}
+button{background:var(--ac);color:#fff;border-color:var(--ac);cursor:pointer}
+.kp{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}
+.kp div{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px}
+.kp b{display:block;font-size:22px}.kp span{font-size:12px;color:var(--mu)}
+.w{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--bd);white-space:nowrap}th:first-child,td:first-child{text-align:left}
+canvas{display:block;width:100%}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}.bar i{display:block;height:14px;border-radius:4px}
+input[type=range]{width:100%}
+small{color:var(--mu)}
+</style></head><body><main>
+<h1>Macro Regime Lab</h1>
+<p class="s">Unsupervised regime detection on 15 macro indicators → 45 engineered time-series features → K-Means &amp; Gaussian Mixture → regime-transition forecasting → asset-class returns by regime. Everything runs in your browser.</p>
+<div class="card"><div class="ctl">
+<label>Algorithm<select id="alg"><option value="km">K-Means</option><option value="gm">Gaussian Mixture</option></select></label>
+<label>Regimes (k): <span id="kv">4</span><input id="k" type="range" min="2" max="6" value="4"></label>
+<label>Data seed<input id="seed" type="number" value="42" style="width:90px"></label>
+<button id="go">Re-simulate &amp; run</button></div>
+<p class="s" style="margin-top:10px">Data is a simulated 1990–2025 monthly panel from a hidden 4-state Markov regime process (true regimes are never shown to the models). Swap <code>gen()</code> for real FRED / Yahoo data to use it on history.</p></div>
+<div class="kp" id="kp"></div>
+<div class="card"><h2>Regime timeline</h2><p class="s">Composite growth score, shaded by detected regime. Drag the slider to pick an as-of month.</p><canvas id="tl"></canvas>
+<input id="sl" type="range" min="0" value="0"><div id="lg" style="font-size:13px;margin-top:6px"></div></div>
+<div class="card"><h2>Transition outlook (3 months ahead)</h2><p class="s" id="ol"></p><div id="ob"></div></div>
+<div class="card"><h2>Asset-class returns by regime</h2><p class="s">Annualized mean return (%). Table shows Sharpe-style ratio in brackets.</p><canvas id="as"></canvas><div class="w" id="at" style="margin-top:10px"></div></div>
+<div class="card"><h2>Regime transition matrix</h2><p class="s">Month-to-month probability of moving from the row regime to the column regime.</p><div class="w" id="tm"></div></div>
+<div class="card"><h2>Regime fingerprints</h2><p class="s">Average standardized level of each indicator within a regime.</p><div class="w" id="fp"></div></div>
+</main>
+<script>
+const NM=['GDP growth','Industrial prod.','Unemployment','CPI inflation','Core PCE','10Y yield','2Y yield','Curve slope','Credit spread','VIX','PMI','Retail sales','Housing starts','Cons. sentiment','M2 growth'];
+const MU=[[.8,.1,-1.6,.6],[.8,-.2,-1.5,.9],[-.8,-.1,1.5,.6],[.3,.9,-.6,-.3],[.3,.8,-.4,-.4],[.4,.6,-.9,-.3],[.5,.9,-1.2,-.7],[-.1,-.9,.9,1],[-.6,.3,1.8,.2],[-.6,.4,1.8,0],[.7,-.5,-1.5,.7],[.6,0,-1.2,.8],[.5,-.3,-1.3,.9],[.7,-.3,-1.2,.2],[-.2,-.3,.4,1]];
+const T=[[.95,.05,0,0],[.1,.8,.1,0],[0,0,.88,.12],[.12,.03,0,.85]];
+const AS=['Equities','Bonds','Currencies','Commodities'];
+const AR=[[[14,13],[4,16],[-22,28],[24,20]],[[2,5],[4,5],[9,7],[4,6]],[[-1,7],[2,7],[4,9],[-3,8]],[[8,15],[6,16],[-20,24],[15,18]]];
+const PAL=['#2a9d8f','#8ab17d','#e9c46a','#e76f51','#6a8fd8','#a66cc2'];
+const N=432;let S={};
+const mb=a=>()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const rn=r=>Math.sqrt(-2*Math.log(r()+1e-12))*Math.cos(2*Math.PI*r());
+const d2=(a,b)=>{let s=0;for(let i=0;i<a.length;i++){const d=a[i]-b[i];s+=d*d}return s};
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dt=r=>{const t=r+12;return(1990+Math.floor(t/12))+'-'+String(t%12+1).padStart(2,'0')};
+// ---- data: replace with real indicators (N x 15) and asset returns (N x 4) ----
+function gen(seed){const r=mb(seed);let st=0,x=MU.map(m=>m[0]);const X=[],R=[];
+ for(let t=0;t<N;t++){let u=r(),c=0;for(let j=0;j<4;j++){c+=T[st][j];if(u<=c){st=j;break}}
+  x=x.map((v,i)=>.7*v+.3*MU[i][st]+.5*rn(r));X.push(x.slice());
+  R.push(AR.map(a=>a[st][0]/1200+a[st][1]/34.64*rn(r)))}
+ return{X,R}}
+// ---- 45 features: level, 6m change, 12m rolling vol per indicator ----
+function feats(X){const F=[];for(let t=12;t<N;t++){const w=[];for(let i=0;i<15;i++){let m=0,v=0;for(let k=0;k<12;k++)m+=X[t-k][i];m/=12;for(let k=0;k<12;k++)v+=(X[t-k][i]-m)**2;w.push(X[t][i],X[t][i]-X[t-6][i],Math.sqrt(v/12))}F.push(w)}
+ const D=F[0].length;for(let j=0;j<D;j++){const m=F.reduce((a,f)=>a+f[j],0)/F.length,s=Math.sqrt(F.reduce((a,f)=>a+(f[j]-m)**2,0)/F.length)||1;F.forEach(f=>f[j]=(f[j]-m)/s)}return F}
+function kmeans(F,k,r){let best=null;for(let rs=0;rs<6;rs++){let C=[F[Math.floor(r()*F.length)].slice()];
+ while(C.length<k){const d=F.map(f=>Math.min(...C.map(c=>d2(f,c))));let u=r()*d.reduce((a,b)=>a+b),i=0;while(u>d[i]&&i<d.length-1){u-=d[i];i++}C.push(F[i].slice())}
+ const L=new Array(F.length).fill(0);
+ for(let it=0;it<60;it++){let ch=false;F.forEach((f,i)=>{let b=0,bd=1e18;C.forEach((c,j)=>{const d=d2(f,c);if(d<bd){bd=d;b=j}});if(L[i]!==b){L[i]=b;ch=true}});
+  C=C.map((c,j)=>{const m=F.filter((_,i)=>L[i]===j);return m.length?c.map((_,q)=>m.reduce((a,f)=>a+f[q],0)/m.length):c});if(!ch)break}
+ const e=F.reduce((a,f,i)=>a+d2(f,C[L[i]]),0);if(!best||e<best.e)best={L,C,e}}return best}
+function gmm(F,k,km){const n=F.length,D=F[0].length;let mu=km.C.map(c=>c.slice()),pi=Array(k).fill(1/k),va=mu.map((c,j)=>{const m=F.filter((_,i)=>km.L[i]===j);return c.map((_,q)=>Math.max(.05,m.reduce((a,f)=>a+(f[q]-c[q])**2,0)/(m.length||1)))});
+ const Rm=Array.from({length:n},()=>Array(k).fill(0));
+ for(let it=0;it<50;it++){F.forEach((f,i)=>{const lp=[];for(let j=0;j<k;j++){let s=Math.log(pi[j]+1e-12);for(let q=0;q<D;q++)s-=.5*(Math.log(2*Math.PI*va[j][q])+(f[q]-mu[j][q])**2/va[j][q]);lp.push(s)}
+  const mx=Math.max(...lp);let z=0;const e=lp.map(v=>{const y=Math.exp(v-mx);z+=y;return y});for(let j=0;j<k;j++)Rm[i][j]=e[j]/z});
+  for(let j=0;j<k;j++){const Nk=Rm.reduce((a,r)=>a+r[j],0)+1e-9;pi[j]=Nk/n;for(let q=0;q<D;q++){let m=0;for(let i=0;i<n;i++)m+=Rm[i][j]*F[i][q];m/=Nk;let v=0;for(let i=0;i<n;i++)v+=Rm[i][j]*(F[i][q]-m)**2;mu[j][q]=m;va[j][q]=Math.max(.05,v/Nk)}}}
+ return{L:Rm.map(r=>r.indexOf(Math.max(...r)))}}
+const gs=f=>(f[0]+f[3]+f[30]+f[33]-f[6])/5;
+function relabel(L,F,k){const sc=Array(k).fill(0),ct=Array(k).fill(0);L.forEach((l,i)=>{sc[l]+=gs(F[i]);ct[l]++});
+ const av=sc.map((s,j)=>ct[j]?s/ct[j]:-9),ord=av.map((v,j)=>[v,j]).sort((a,b)=>b[0]-a[0]).map(a=>a[1]),mp={};ord.forEach((o,i)=>mp[o]=i);
+ return{L:L.map(l=>mp[l]),tag:ord.map((o,i)=>'R'+(i+1)+' · '+(av[o]>.35?'Expansion':av[o]<-.35?'Contraction':'Transition'))}}
+function ari(a,b,k){const M=Array.from({length:k},()=>Array(k).fill(0));a.forEach((x,i)=>M[x][b[i]]++);const c=x=>x*(x-1)/2,ra=Array(k).fill(0),cb=Array(k).fill(0);let s=0;M.forEach((r,i)=>r.forEach((v,j)=>{s+=c(v);ra[i]+=v;cb[j]+=v}));const sa=ra.reduce((p,v)=>p+c(v),0),sb=cb.reduce((p,v)=>p+c(v),0),e=sa*sb/c(a.length);return(s-e)/((sa+sb)/2-e||1)}
+function fit(X,y,k){const D=X[0].length,n=X.length,W=Array.from({length:k},()=>Array(D+1).fill(0));
+ for(let ep=0;ep<250;ep++){const G=W.map(w=>w.map(()=>0));X.forEach((x,i)=>{const p=sm(W,x);for(let j=0;j<k;j++){const g=p[j]-(y[i]===j?1:0);for(let q=0;q<D;q++)G[j][q]+=g*x[q];G[j][D]+=g}});
+  for(let j=0;j<k;j++)for(let q=0;q<=D;q++)W[j][q]-=.1*(G[j][q]/n+.01*W[j][q])}return W}
+function sm(W,x){const D=x.length,z=W.map(w=>{let s=w[D];for(let q=0;q<D;q++)s+=w[q]*x[q];return s}),m=Math.max(...z),e=z.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+function run(newData){const k=+$('k').value,seed=+$('seed').value||1;
+ if(newData||!S.D){S.D=gen(seed);S.F=feats(S.D.X)}
+ const F=S.F,r=mb(seed+7),km=kmeans(F,k,r),gm=gmm(F,k,km);
+ S.agree=ari(km.L,gm.L,k);const pick=$('alg').value==='km'?km.L:gm.L,rl=relabel(pick,F,k);S.L=rl.L;S.tag=rl.tag;S.k=k;
+ S.g=F.map(gs);const n=F.length;
+ S.T=Array.from({length:k},()=>Array(k).fill(0));for(let i=0;i<n-1;i++)S.T[S.L[i]][S.L[i+1]]++;S.T=S.T.map(r=>{const s=r.reduce((a,b)=>a+b)||1;return r.map(v=>v/s)});
+ const H=3,m=n-H,tr=Math.floor(m*.7),Wt=fit(F.slice(0,tr),S.L.slice(H,tr+H),k);S.W=Wt;
+ let ok=0,pers=0,tn=0,tok=0;for(let i=tr;i<m;i++){const p=sm(Wt,F[i]),pr=p.indexOf(Math.max(...p)),y=S.L[i+H];if(pr===y)ok++;if(S.L[i]===y)pers++;if(S.L[i]!==y){tn++;if(pr===y)tok++}}
+ S.acc=ok/(m-tr);S.pers=pers/(m-tr);S.trec=tn?tok/tn:NaN;S.tr=tr;
+ const sl=$('sl');sl.max=n-1;if(!(sl.value>=0)||newData||+sl.value>n-1)sl.value=n-1;
+ render()}
+const $=id=>document.getElementById(id);
+function setup(id,h){const c=$(id),w=c.parentElement.clientWidth-32,d=devicePixelRatio||1;c.width=w*d;c.height=h*d;c.style.height=h+'px';const x=c.getContext('2d');x.scale(d,d);x.font='11px system-ui';return[x,w,h]}
+function render(){const k=S.k,n=S.L.length,sel=+$('sl').value,tx=css('--tx'),mu=css('--mu'),bd=css('--bd');
+ $('kp').innerHTML=[[k,'regimes detected'],[S.agree.toFixed(2),'K-Means ↔ GMM agreement (ARI)'],[(S.acc*100).toFixed(0)+'%','out-of-sample accuracy, t+3'],[(S.pers*100).toFixed(0)+'%','"no change" baseline'],[isNaN(S.trec)?'–':(S.trec*100).toFixed(0)+'%','transitions called correctly']].map(a=>`<div><b>${a[0]}</b><span>${a[1]}</span></div>`).join('');
+ $('lg').innerHTML=S.tag.map((t,i)=>`<span style="margin-right:14px"><i class="dot" style="background:${PAL[i]}"></i>${t}</span>`).join('');
+ // timeline
+ {const[x,w,h]=setup('tl',230),g=S.g,pd=30,mn=Math.min(...g),mx=Math.max(...g),X=i=>pd+i*(w-pd-6)/(n-1),Y=v=>h-22-(v-mn)/(mx-mn)*(h-38);
+  for(let i=0;i<n-1;i++){x.fillStyle=PAL[S.L[i]]+'3a';x.fillRect(X(i),6,X(i+1)-X(i)+1,h-28)}
+  x.strokeStyle=tx;x.lineWidth=1.4;x.beginPath();g.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke();
+  x.fillStyle=mu;for(let y=1995;y<=2025;y+=5){const i=(y-1990)*12-12;x.fillText(y,X(i)-10,h-6)}
+  x.strokeStyle=bd;x.beginPath();x.moveTo(pd,Y(0));x.lineTo(w-6,Y(0));x.stroke();x.fillText('0',10,Y(0)+4);
+  x.strokeStyle=css('--ac');x.lineWidth=2;x.beginPath();x.moveTo(X(sel),6);x.lineTo(X(sel),h-22);x.stroke()}
+ // outlook
+ {const p=sm(S.W,S.F[sel]),cur=S.L[sel],ins=sel<S.tr?'in-sample':'out-of-sample';
+  $('ol').innerHTML=`As of <b>${dt(sel)}</b> (${ins}) the economy is in <b>${S.tag[cur]}</b>. Estimated probability of a different regime in 3 months: <b>${((1-p[cur])*100).toFixed(0)}%</b>.`;
+  $('ob').innerHTML=p.map((v,i)=>`<div class="bar"><span style="width:150px"><i class="dot" style="background:${PAL[i]}"></i>${S.tag[i]}</span><i style="width:${Math.max(2,v*55)}%;background:${PAL[i]}"></i>${(v*100).toFixed(0)}%</div>`).join('')}
+ // assets
+ const st=AS.map((a,ai)=>Array.from({length:k},(_,j)=>{const v=[];S.L.forEach((l,i)=>{if(l===j)v.push(S.D.R[i+12][ai])});const m=v.reduce((a,b)=>a+b,0)/(v.length||1),s=Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/(v.length||1));return{n:v.length,r:m*1200,sh:s?m*12/(s*Math.sqrt(12)):0}}));
+ {const[x,w,h]=setup('as',240),pd=34,gw=(w-pd)/4,all=st.flat().map(o=>o.r),mx=Math.max(5,...all),mn=Math.min(-5,...all),Y=v=>10+(mx-v)/(mx-mn)*(h-40);
+  x.strokeStyle=bd;x.beginPath();x.moveTo(pd,Y(0));x.lineTo(w,Y(0));x.stroke();x.fillStyle=mu;x.fillText('0%',4,Y(0)+4);
+  AS.forEach((a,ai)=>{const bw=Math.min(28,(gw-24)/k);st[ai].forEach((o,j)=>{const bx=pd+ai*gw+12+j*bw;x.fillStyle=PAL[j];x.fillRect(bx,Math.min(Y(0),Y(o.r)),bw-3,Math.abs(Y(o.r)-Y(0)));});x.fillStyle=tx;x.fillText(a,pd+ai*gw+gw/2-18,h-8)})}
+ $('at').innerHTML='<table><tr><th>Regime</th><th>Months</th>'+AS.map(a=>`<th>${a}</th>`).join('')+'</tr>'+S.tag.map((t,j)=>`<tr><td><i class="dot" style="background:${PAL[j]}"></i>${t}</td><td>${st[0][j].n}</td>`+AS.map((a,ai)=>{const o=st[ai][j];return`<td style="color:${o.r>=0?'#2a9d8f':'#e76f51'}">${o.r.toFixed(1)}% <small>(${o.sh.toFixed(2)})</small></td>`}).join('')+'</tr>').join('')+'</table>';
+ $('tm').innerHTML='<table><tr><th>From \\ To</th>'+S.tag.map(t=>`<th>${t}</th>`).join('')+'</tr>'+S.T.map((r,i)=>`<tr><td>${S.tag[i]}</td>`+r.map(v=>`<td style="background:rgba(42,109,244,${(v*.55).toFixed(2)})">${(v*100).toFixed(0)}%</td>`).join('')+'</tr>').join('')+'</table>';
+ const cm=Array.from({length:k},(_,j)=>NM.map((_,i)=>{let s=0,c=0;S.L.forEach((l,t)=>{if(l===j){s+=S.F[t][i*3];c++}});return c?s/c:0}));
+ $('fp').innerHTML='<table><tr><th>Indicator</th>'+S.tag.map(t=>`<th>${t}</th>`).join('')+'</tr>'+NM.map((nm,i)=>`<tr><td>${nm}</td>`+cm.map(c=>{const v=c[i];return`<td style="background:${v>=0?'rgba(42,157,143,':'rgba(231,111,81,'}${Math.min(.6,Math.abs(v)*.35).toFixed(2)})">${v.toFixed(2)}</td>`}).join('')+'</tr>').join('')+'</table>'}
+$('k').oninput=e=>{$('kv').textContent=e.target.value;run(false)};
+$('alg').onchange=()=>run(false);$('go').onclick=()=>run(true);$('sl').oninput=render;
+addEventListener('resize',()=>S.L&&render());
+run(true);
+</script></body></html>
